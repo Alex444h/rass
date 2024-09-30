@@ -9,6 +9,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
       - name: Download ngrok
         run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
@@ -28,10 +31,11 @@ jobs:
           Set-WinUILanguageOverride -Language ru-RU
           Set-Culture ru-RU
           Set-WinHomeLocation -GeoId 255  # Россия
-          
+
           # Перезагрузка системы для применения языковых настроек
-          # Обратите внимание, что перезагрузка может прервать workflow
-          shutdown /r /t 0
+          # Обратите внимание, что перезагрузка прервет текущий workflow
+          # Если перезагрузка не требуется в рамках workflow, можно удалить следующую строку
+          # shutdown /r /t 0
         shell: powershell
 
       - name: Optimize Network Settings
@@ -60,13 +64,13 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
           # Создание локального пользователя с правами администратора
-          # Рекомендуется использовать более надёжный способ хранения пароля
-          $securePassword = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+          # Рекомендуется использовать секреты GitHub для хранения пароля
+          $securePassword = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
           New-LocalUser -Name "runneradmin" -Password $securePassword -FullName "RDP Admin" -Description "User for RDP access"
           Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
         shell: powershell
 
       - name: Create ngrok Tunnel for RDP
-        run: .\ngrok\ngrok.exe tcp 3389
-        # Вы можете сохранить вывод ngrok для получения адреса туннеля
-        # Например, используя артефакты или другие методы
+        run: .\ngrok\ngrok.exe tcp 3389 --region eu
+        # Опция --region eu задаёт регион Европа
+        # Доступные регионы: us, eu, ap, au, sa, jp, in, etc.
