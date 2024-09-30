@@ -36,12 +36,13 @@ jobs:
       run: |
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -access -on -users rdpuser -privs -all -restart -agent -menu
+        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent
 
     # Шаг 5: Открываем порт 3389 в брандмауэре
     - name: Open port 3389 in firewall
       run: |
         sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app
-        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockApp /System/Library/CoreServices/RemoteManagement/ARDAgent.app
+        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /System/Library/CoreServices/RemoteManagement/ARDAgent.app
         sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
 
     # Шаг 6: Создаем туннель через ngrok на порт 3389
