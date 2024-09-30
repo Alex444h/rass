@@ -63,7 +63,7 @@ jobs:
             Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
           }
           catch {
-            Write-Output "Failed to disable Power Saving Mode for $($adapter.Name): $_.Exception.Message"
+            Write-Output "Failed to disable Power Saving Mode for $($adapter.Name): $($_.Exception.Message)"
           }
         }
 
@@ -79,7 +79,7 @@ jobs:
           }
         }
         catch {
-          Write-Output "Failed to set TCP Fast Open: $_.Exception.Message"
+          Write-Output "Failed to set TCP Fast Open: $($_.Exception.Message)"
         }
       shell: pwsh
 
@@ -108,7 +108,7 @@ jobs:
               Write-Output "Service $service stopped and disabled."
             }
             catch {
-              Write-Output "Failed to stop/disable service $service: $_.Exception.Message"
+              Write-Output "Failed to stop/disable service $service: $($_.Exception.Message)"
             }
           } else {
             Write-Output "Service $service not found. Skipping."
@@ -117,6 +117,8 @@ jobs:
       shell: pwsh
 
     - name: Enable Remote Desktop
+      env:
+        ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       run: |
         # Включение Remote Desktop
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
@@ -132,7 +134,7 @@ jobs:
 
         # Создание или обновление пользователя "runneradmin"
         $username = "runneradmin"
-        $password = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        $password = ConvertTo-SecureString $env:ADMIN_PASSWORD -AsPlainText -Force
         if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
           New-LocalUser -Name $username -Password $password -FullName "Runner Admin" -Description "User for RDP access"
           Add-LocalGroupMember -Group "Administrators" -Member $username
