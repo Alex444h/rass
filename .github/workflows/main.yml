@@ -18,17 +18,23 @@ jobs:
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
+    - name: Create New User for RDP
+      run: |
+        sudo sysadminctl -addUser rdpuser -password "P@ssw0rd!" -admin
+        sudo dscl . create /Users/rdpuser UserShell /bin/bash
+        sudo dscl . create /Users/rdpuser RealName "RDP User"
+        sudo dscl . create /Users/rdpuser UniqueID "510"
+        sudo dscl . create /Users/rdpuser PrimaryGroupID 20
+        sudo dscl . create /Users/rdpuser NFSHomeDirectory /Users/rdpuser
+        sudo createhomedir -c -u rdpuser
+
     - name: Enable Remote Management (ARD)
       run: |
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate
-        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -access -on -users runneradmin -privs -all -restart -agent -menu
+        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -access -on -users rdpuser -privs -all -restart -agent -menu
 
     - name: Open Firewall for Remote Management
       run: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app
-
-    - name: Set Password for runneradmin
-      run: |
-        sudo dscl . -passwd /Users/runneradmin "P@ssw0rd!"
 
     - name: Create Ngrok Tunnel for RDP
       run: ./ngrok tcp 3389
