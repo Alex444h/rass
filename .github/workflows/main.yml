@@ -1,0 +1,39 @@
+name: Remote MacOS Access
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  remote-access:
+    runs-on: macos-latest
+
+    steps:
+    - name: Install Homebrew
+      run: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    
+    - name: Install ngrok
+      run: |
+        brew install --cask ngrok
+
+    - name: Configure VNC
+      run: |
+        # Включить удалённый доступ к экрану
+        sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -suspend
+        sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCEnabled -bool true
+        sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCPassword -string "$(echo -n 'your_vnc_password' | /usr/bin/openssl enc -aes-128-cbc -a -salt -pass pass:"ngrok")"
+        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
+
+    - name: Start ngrok Tunnel
+      run: |
+        ngrok tcp 5900 --log=stdout > ngrok.log &
+        sleep 10
+        ngrok_url=$(grep -o "tcp://[0-9\.]*:[0-9]*" ngrok.log | head -n1)
+        echo "NGROK_URL=$ngrok_url" >> $GITHUB_ENV
+
+    - name: Output Connection Info
+      run: |
+        echo "Connect to VNC at ${{ env.NGROK_URL }}"
