@@ -9,34 +9,37 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
       - name: Установка Homebrew
         run: |
           /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
           eval "$(/opt/homebrew/bin/brew shellenv)"
-
+      
       - name: Установка TigerVNC
         run: brew install tigervnc
-
+      
       - name: Установка jq
         run: brew install jq
-
+      
       - name: Настройка VNC пароля
         run: |
           mkdir -p ~/.vnc
           echo "your_vnc_password" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
-
+      
       - name: Запуск VNC сервера
         run: |
           vncserver :1 -localhost no
-
+      
       - name: Установка ngrok
         run: brew install --cask ngrok
-
+      
       - name: Аутентификация ngrok
         run: ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-
+      
       - name: Создание туннеля ngrok
         id: ngrok
         run: |
@@ -44,6 +47,6 @@ jobs:
           sleep 10
           NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r .tunnels[0].public_url)
           echo "NGROK_URL=${NGROK_URL}" >> $GITHUB_OUTPUT
-
+      
       - name: Вывод доступа
         run: echo "VNC доступен по адресу: ${{ steps.ngrok.outputs.NGROK_URL }}"
