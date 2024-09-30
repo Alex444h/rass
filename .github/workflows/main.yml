@@ -66,7 +66,7 @@ jobs:
             Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
           }
           catch {
-            Write-Output ("Failed to disable Power Saving Mode for $($adapter.Name): $($_.Exception.Message)")
+            Write-Output ("Failed to disable Power Saving Mode for $service: {0}" -f $_.Exception.Message)
           }
         }
 
@@ -82,7 +82,7 @@ jobs:
           }
         }
         catch {
-          Write-Output ("Failed to set TCP Fast Open: $($_.Exception.Message)")
+          Write-Output ("Failed to set TCP Fast Open: {0}" -f $_.Exception.Message)
         }
       shell: pwsh
 
@@ -111,7 +111,7 @@ jobs:
               Write-Output "Service $service stopped and disabled."
             }
             catch {
-              Write-Output ("Failed to stop/disable service $service: $($_.Exception.Message)")
+              Write-Output ("Failed to stop/disable service $service: {0}" -f $_.Exception.Message)
             }
           } else {
             Write-Output "Service $service not found. Skipping."
