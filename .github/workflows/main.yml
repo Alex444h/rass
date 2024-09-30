@@ -91,6 +91,10 @@ jobs:
             Stop-Service -Name "SysMain" -Force
             Set-Service -Name "SysMain" -StartupType Disabled
             Write-Output "Сервис SysMain отключен."
+
+            # Очистка временных файлов
+            Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Output "Временные файлы очищены."
           }
           catch {
             Write-Error "Ошибка при оптимизации производительности системы: $_"
@@ -158,5 +162,27 @@ jobs:
           }
           catch {
             Write-Error "Ошибка при отображении информации о туннеле ngrok: $_"
+            exit 1
+          }
+
+      - name: Clean Up Disk Space
+        shell: pwsh
+        run: |
+          try {
+            # Очистка корзины
+            Clear-RecycleBin -Force
+            Write-Output "Корзина очищена."
+
+            # Удаление временных файлов в различных местах
+            Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$env:LOCALAPPDATA\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$env:USERPROFILE\AppData\Local\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Output "Временные файлы удалены."
+
+            # Дополнительная очистка, если необходимо
+            # Например, удаление кешей браузеров или других приложений
+          }
+          catch {
+            Write-Error "Ошибка при очистке дискового пространства: $_"
             exit 1
           }
