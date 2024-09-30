@@ -1,33 +1,31 @@
-name: RDP to Windows 11 via ngrok
+name: Setup RDP with Ngrok on Windows 11
 
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: windows-latest
-
+  setup-rdp:
+    runs-on: self-hosted  # Используем self-hosted runner
     steps:
-    - name: Download ngrok
-      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+      - name: Скачивание Ngrok
+        run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
-    - name: Extract ngrok
-      run: Expand-Archive ngrok.zip
+      - name: Распаковка Ngrok
+        run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
 
-    - name: Add execution permission for ngrok
-      run: |
-        icacls .\ngrok\ngrok.exe /grant Everyone:F
-        icacls .\ngrok\ngrok.exe /setintegritylevel L
+      - name: Аутентификация Ngrok
+        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: Enable Remote Desktop and firewall rules
-      run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+      - name: Включение RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          # Создание пользователя (опционально)
+          # Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force)
 
-    - name: Set password for user 'runneradmin'
-      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "Str0ngP@ssw0rd123!" -Force)
-
-    - name: Start ngrok tunnel
-      run: .\ngrok\ngrok.exe tcp 3389 --authtoken $Env:NGROK_AUTH_TOKEN --log=stdout
-      env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: Запуск Ngrok для RDP
+        run: .\ngrok\ngrok.exe tcp 3389
