@@ -2,158 +2,142 @@ name: Mas
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+
     env:
       NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       RUNNER_ADMIN_PASSWORD: ${{ secrets.RUNNER_ADMIN_PASSWORD }}
 
     steps:
-      # Шаг 1: Проверка кода репозитория
       - name: Checkout repository
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 1  # Ограничение глубины для ускорения
 
-      # Шаг 2: Установка зависимостей PowerShell
       - name: Setup PowerShell
         uses: actions/setup-powershell@v2
         with:
-          pwsh-version: '7.3.4'  # Указание версии для консистентности
+          pwsh-version: '7.3.4' # Specify desired PowerShell version
 
-      # Шаг 3: Скачать ngrok с проверкой целостности
-      - name: Download ngrok
+      - name: Cache ngrok
+        uses: actions/cache@v3
+        with:
+          path: ./ngrok
+          key: ${{ runner.os }}-ngrok-${{ hashFiles('**/ngrok.zip') }}
+          restore-keys: |
+            ${{ runner.os }}-ngrok-
+
+      - name: Download and Extract ngrok
+        if: steps.cache_ngrok.outputs.cache-hit != 'true'
         run: |
-          $url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
-          $output = "ngrok.zip"
-          $checksum = "ВАШ_CHECKSUM_ЗДЕСЬ"  # Замените на реальный контрольный код
-          Invoke-WebRequest $url -OutFile $output
-          $fileChecksum = Get-FileHash $output -Algorithm SHA256
-          if ($fileChecksum.Hash -ne $checksum) {
-            Write-Error "Checksum verification failed for ngrok.zip"
-            exit 1
-          }
+          Write-Output "Downloading ngrok..."
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip" || exit 1
+          Write-Output "Extracting ngrok..."
+          Expand-Archive -Path "ngrok.zip" -DestinationPath "./ngrok" || exit 1
         shell: pwsh
 
-      # Шаг 4: Распаковать ngrok
-      - name: Extract ngrok
-        run: Expand-Archive -Path ngrok.zip -DestinationPath ./ngrok
-        shell: pwsh
-
-      # Шаг 5: Аутентификация ngrok
       - name: Authenticate ngrok
-        run: ./ngrok/ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        run: |
+          Write-Output "Authenticating ngrok..."
+          ./ngrok/ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN || exit 1
         shell: pwsh
 
-      # Шаг 6: Настройка DNS на Cloudflare
       - name: Set DNS to Cloudflare
         run: |
+          Write-Output "Setting DNS servers to Cloudflare..."
           $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
           foreach ($adapter in $adapters) {
-            Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses @("1.1.1.1","1.0.0.1")
+              Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses @("1.1.1.1","1.0.0.1") || exit 1
           }
         shell: pwsh
 
-      # Шаг 7: Оптимизация производительности системы
       - name: Optimize System Performance
         run: |
-          # Установка плана электропитания на Высокую производительность
-          powercfg -setactive SCHEME_MAX
-          
-          # Отключение анимаций и эффектов для повышения производительности
-          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'WindowMetrics' -Value ''
-          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0'
-          
-          # Отключение неиспользуемых сервисов
-          if (Get-Service -Name "SysMain" -ErrorAction SilentlyContinue) {
-            Stop-Service -Name "SysMain" -Force
-            Set-Service -Name "SysMain" -StartupType Disabled
-          }
+          Write-Output "Setting power plan to High Performance..."
+          powercfg -S SCHEME_MIN || exit 1
+
+          Write-Output "Disabling animations and visual effects..."
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'WindowMetrics' -Value '00000000' || exit 1
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0' || exit 1
+
+          Write-Output "Disabling SysMain service..."
+          Stop-Service -Name "SysMain" -Force || Write-Output "SysMain service is not running."
+          Set-Service -Name "SysMain" -StartupType Disabled || exit 1
         shell: pwsh
 
-      # Шаг 8: Включение Remote Desktop и создание пользователя
       - name: Enable Remote Desktop and Create User
         run: |
-          # Разрешение подключений через RDP
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Write-Output "Enabling Remote Desktop..."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 || exit 1
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" || exit 1
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 || exit 1
 
-          # Проверка и создание/обновление пользователя 'runneradmin'
-          $user = "runneradmin"
-          $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
-          $userExists = Get-LocalUser -Name $user -ErrorAction SilentlyContinue
-
+          $userExists = Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue
           if (-not $userExists) {
-            Write-Output "Создание нового пользователя '$user'."
-            New-LocalUser -Name $user -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
-            Add-LocalGroupMember -Group "Administrators" -Member $user
-          } else {
-            Write-Output "Пользователь '$user' уже существует. Обновление пароля."
-            Set-LocalUser -Name $user -Password $password
+              Write-Output "Creating new user 'runneradmin'..."
+              $password = ConvertTo-SecureString $Env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
+              New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access" || exit 1
+              Add-LocalGroupMember -Group "Administrators" -Member "runneradmin" || exit 1
+          }
+          else {
+              Write-Output "User 'runneradmin' already exists. Updating password..."
+              $password = ConvertTo-SecureString $Env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
+              Set-LocalUser -Name "runneradmin" -Password $password || exit 1
 
-            $isMember = Get-LocalGroupMember -Group "Administrators" -Member $user -ErrorAction SilentlyContinue
-            if (-not $isMember) {
-              Write-Output "Добавление пользователя '$user' в группу 'Administrators'."
-              Add-LocalGroupMember -Group "Administrators" -Member $user
-            } else {
-              Write-Output "Пользователь '$user' уже является членом группы 'Administrators'."
-            }
+              $isMember = Get-LocalGroupMember -Group "Administrators" -Member "runneradmin" -ErrorAction SilentlyContinue
+              if (-not $isMember) {
+                  Write-Output "Adding 'runneradmin' to Administrators group..."
+                  Add-LocalGroupMember -Group "Administrators" -Member "runneradmin" || exit 1
+              }
+              else {
+                  Write-Output "User 'runneradmin' is already a member of Administrators."
+              }
           }
         shell: pwsh
 
-      # Шаг 9: Создание туннеля ngrok для RDP с повторными попытками
       - name: Create ngrok Tunnel for RDP
         run: |
-          ./ngrok/ngrok.exe tcp 3389 --log=stdout &
-          $ngrok_pid = $LASTEXITCODE
-          Start-Sleep -Seconds 5  # Ожидание запуска туннеля
-
-          # Проверка успешного запуска
-          if (-not (Get-Process -Id $ngrok_pid -ErrorAction SilentlyContinue)) {
-            Write-Error "ngrok failed to start."
-            exit 1
-          }
+          Write-Output "Creating ngrok tunnel for RDP..."
+          ./ngrok/ngrok.exe tcp 3389 --log=stdout > ngrok.log &
+          Start-Sleep -Seconds 15
         shell: pwsh
-        retry: 
-          max-attempts: 3
-          delay: 10s
 
-      # Шаг 10: Отображение информации о туннеле ngrok
       - name: Display ngrok Tunnel Information
         run: |
-          Start-Sleep -Seconds 10
-          ./ngrok/ngrok.exe tcp 3389 --log=stdout
+          Write-Output "Retrieving ngrok tunnel information..."
+          $tunnelInfo = Select-String -Path "ngrok.log" -Pattern "tcp://[0-9\.]+:[0-9]+" | Select-Object -First 1
+          if ($tunnelInfo) {
+              Write-Output "ngrok Tunnel: $($tunnelInfo.Line)"
+          }
+          else {
+              Write-Output "Failed to retrieve ngrok tunnel information."
+              exit 1
+          }
         shell: pwsh
 
-      # Шаг 11: Уведомление при завершении workflow
-      - name: Notify on Success
-        if: success()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.example.com
-          server_port: 587
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "GitHub Actions: Workflow Выполнен Успешно"
-          body: "Ваш GitHub Actions workflow был успешно выполнен."
-          to: your-email@example.com
-          from: GitHub Actions <actions@example.com>
+      - name: Clean up
+        run: |
+          Write-Output "Cleaning up temporary files..."
+          Remove-Item -Path "ngrok.zip" -Force -ErrorAction SilentlyContinue
+        shell: pwsh
 
-      - name: Notify on Failure
-        if: failure()
-        uses: dawidd6/action-send-mail@v3
+      - name: Save ngrok Log as Artifact
+        uses: actions/upload-artifact@v3
         with:
-          server_address: smtp.example.com
-          server_port: 587
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "GitHub Actions: Workflow Завершился С Ошибкой"
-          body: "Ваш GitHub Actions workflow завершился с ошибкой. Проверьте логи для деталей."
-          to: your-email@example.com
-          from: GitHub Actions <actions@example.com>
+          name: ngrok-log
+          path: ngrok.log
+
+      - name: Notify Success
+        if: success()
+        run: |
+          Write-Output "Workflow completed successfully."
+        shell: pwsh
+
+      - name: Notify Failure
+        if: failure()
+        run: |
+          Write-Output "Workflow failed. Please check the logs for details."
+        shell: pwsh
