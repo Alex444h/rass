@@ -21,9 +21,9 @@ jobs:
 
       # Шаг 2: Настройка PowerShell Core (если требуется)
       - name: Setup PowerShell
-        uses: actions/setup-powershell@v2
+        uses: PowerShell/setup-powershell@v1
         with:
-          pwsh-version: '7.3.x'
+          version: '7.3.5'  # Укажите нужную версию PowerShell
 
       # Шаг 3: Скачать ngrok
       - name: Download ngrok
