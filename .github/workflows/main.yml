@@ -22,19 +22,19 @@ jobs:
 
     - name: Configure DNS to Cloudflare
       run: |
-        $interface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1 -ExpandProperty Name
+        $interface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.HardwareInterface -eq $true } | Select-Object -First 1 -ExpandProperty Name
         if ($interface) {
           Set-DnsClientServerAddress -InterfaceAlias $interface -ServerAddresses ("1.1.1.1","1.0.0.1")
           Write-Output "DNS servers set to Cloudflare for interface $interface."
         } else {
-          Write-Error "No active network interface found."
+          Write-Error "No active physical network interface found."
         }
       shell: pwsh
 
     - name: Optimize Network Settings
       run: |
-        # Получение всех активных сетевых адаптеров
-        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+        # Получение всех активных физических сетевых адаптеров
+        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.HardwareInterface -eq $true }
 
         foreach ($adapter in $adapters) {
           Write-Output "Processing adapter: $($adapter.Name)"
@@ -58,18 +58,28 @@ jobs:
           }
 
           # Отключение режима энергосбережения для сетевых адаптеров
-          Set-NetAdapterPowerManagement -Name $adapter.Name -PowerSavingMode "Disabled"
-          Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
+          try {
+            Set-NetAdapterPowerManagement -Name $adapter.Name -AllowComputerToTurnOffDevice $false -ErrorAction Stop
+            Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
+          }
+          catch {
+            Write-Output "Failed to disable Power Saving Mode for $($adapter.Name): $_.Exception.Message"
+          }
         }
 
         # Включение TCP Fast Open
         $tcpFastOpenPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
-        if (-not (Get-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -ErrorAction SilentlyContinue)) {
-          New-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1 -PropertyType DWord -Force
-          Write-Output "TCP Fast Open enabled."
-        } else {
-          Set-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1
-          Write-Output "TCP Fast Open set to enabled."
+        try {
+          if (-not (Get-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -ErrorAction SilentlyContinue)) {
+            New-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1 -PropertyType DWord -Force
+            Write-Output "TCP Fast Open enabled."
+          } else {
+            Set-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1
+            Write-Output "TCP Fast Open set to enabled."
+          }
+        }
+        catch {
+          Write-Output "Failed to set TCP Fast Open: $_.Exception.Message"
         }
       shell: pwsh
 
@@ -92,9 +102,14 @@ jobs:
         $servicesToDisable = @("DiagTrack", "dmwappushservice")
         foreach ($service in $servicesToDisable) {
           if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
-            Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
-            Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue
-            Write-Output "Service $service stopped and disabled."
+            try {
+              Stop-Service -Name $service -Force -ErrorAction Stop
+              Set-Service -Name $service -StartupType Disabled -ErrorAction Stop
+              Write-Output "Service $service stopped and disabled."
+            }
+            catch {
+              Write-Output "Failed to stop/disable service $service: $_.Exception.Message"
+            }
           } else {
             Write-Output "Service $service not found. Skipping."
           }
