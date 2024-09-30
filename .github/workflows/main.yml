@@ -1,153 +1,69 @@
 name: Mas
 
-on:
-  push:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
     - name: Download ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-      shell: pwsh
 
     - name: Extract ngrok
-      run: Expand-Archive ngrok.zip -DestinationPath ngrok
-      shell: pwsh
+      run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
 
-    - name: Auth ngrok
+    - name: Authenticate ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-      shell: pwsh
 
-    - name: Configure DNS to Cloudflare
+    - name: Set DNS to Cloudflare
       run: |
-        $interface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.HardwareInterface -eq $true } | Select-Object -First 1 -ExpandProperty Name
-        if ($interface) {
-          Set-DnsClientServerAddress -InterfaceAlias $interface -ServerAddresses ("1.1.1.1","1.0.0.1")
-          Write-Output "DNS servers set to Cloudflare for interface $interface."
-        } else {
-          Write-Error "No active physical network interface found."
+        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+        foreach ($adapter in $adapters) {
+          Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses ("1.1.1.1","1.0.0.1")
         }
       shell: pwsh
 
     - name: Optimize Network Settings
       run: |
-        # Получение всех активных физических сетевых адаптеров
-        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.HardwareInterface -eq $true }
-
-        foreach ($adapter in $adapters) {
-          Write-Output "Processing adapter: $($adapter.Name)"
-
-          # Отключение Large Send Offload v2 (IPv4)
-          $lso_v2_ipv4 = Get-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv4)" -ErrorAction SilentlyContinue
-          if ($lso_v2_ipv4) {
-            Set-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv4)" -DisplayValue "Disabled"
-            Write-Output "Disabled Large Send Offload v2 (IPv4) for $($adapter.Name)."
-          } else {
-            Write-Output "Large Send Offload v2 (IPv4) not found for $($adapter.Name). Skipping."
-          }
-
-          # Отключение Large Send Offload v2 (IPv6)
-          $lso_v2_ipv6 = Get-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv6)" -ErrorAction SilentlyContinue
-          if ($lso_v2_ipv6) {
-            Set-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv6)" -DisplayValue "Disabled"
-            Write-Output "Disabled Large Send Offload v2 (IPv6) for $($adapter.Name)."
-          } else {
-            Write-Output "Large Send Offload v2 (IPv6) not found for $($adapter.Name). Skipping."
-          }
-
-          # Отключение режима энергосбережения для сетевых адаптеров
-          try {
-            Set-NetAdapterPowerManagement -Name $adapter.Name -AllowComputerToTurnOffDevice $false -ErrorAction Stop
-            Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
-          }
-          catch {
-            Write-Output ("Failed to disable Power Saving Mode for $service: {0}" -f $_.Exception.Message)
-          }
-        }
-
-        # Включение TCP Fast Open
-        $tcpFastOpenPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
-        try {
-          if (-not (Get-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -ErrorAction SilentlyContinue)) {
-            New-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1 -PropertyType DWord -Force
-            Write-Output "TCP Fast Open enabled."
-          } else {
-            Set-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1
-            Write-Output "TCP Fast Open set to enabled."
-          }
-        }
-        catch {
-          Write-Output ("Failed to set TCP Fast Open: {0}" -f $_.Exception.Message)
-        }
+        # Установка QoS на максимальную приоритетность
+        New-NetQosPolicy -Name "HighPriorityRDP" -IPProtocolMatchCondition TCP -PortMatchCondition 3389 -ThrottleRateActionBitsPerSecond 10000000
       shell: pwsh
 
-    - name: Optimize System for Performance
+    - name: Optimize System Performance
       run: |
-        # Установка схемы электропитания на "Высокая производительность"
-        $highPerfGuid = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
-        $existingGuid = powercfg -list | Select-String $highPerfGuid
-        if (-not $existingGuid) {
-          powercfg -duplicatescheme $highPerfGuid
-        }
-        powercfg -setactive $highPerfGuid
-        Write-Output "Power plan set to High Performance."
+        # Установка плана электропитания на Высокую производительность
+        powercfg -duplicatescheme SCHEME_MIN
 
-        # Отключение визуальных эффектов для повышения производительности
-        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name 'VisualFXSetting' -Value 2
-        Write-Output "Visual effects disabled for performance."
+        # Отключение анимаций и эффектов для повышения производительности
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name 'WindowMetrics' -Value ''
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0'
 
-        # Отключение ненужных сервисов
-        $servicesToDisable = @("DiagTrack", "dmwappushservice")
-        foreach ($service in $servicesToDisable) {
-          if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
-            try {
-              Stop-Service -Name $service -Force -ErrorAction Stop
-              Set-Service -Name $service -StartupType Disabled -ErrorAction Stop
-              Write-Output "Service $service stopped and disabled."
-            }
-            catch {
-              Write-Output ("Failed to stop/disable service $service: {0}" -f $_.Exception.Message)
-            }
-          } else {
-            Write-Output "Service $service not found. Skipping."
-          }
-        }
+        # Отключение неиспользуемых сервисов
+        Stop-Service -Name "SysMain" -Force
+        Set-Service -Name "SysMain" -StartupType Disabled
       shell: pwsh
 
     - name: Enable Remote Desktop
-      env:
-        ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       run: |
-        # Включение Remote Desktop
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Write-Output "Remote Desktop enabled."
-
-        # Включение правила брандмауэра для Remote Desktop
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Output "Firewall rules for Remote Desktop enabled."
-
-        # Требование аутентификации пользователей
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-        Write-Output "User authentication required for RDP."
-
-        # Создание или обновление пользователя "runneradmin"
-        $username = "runneradmin"
-        $password = ConvertTo-SecureString $env:ADMIN_PASSWORD -AsPlainText -Force
-        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-          New-LocalUser -Name $username -Password $password -FullName "Runner Admin" -Description "User for RDP access"
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Write-Output "User $username created and added to Administrators group."
-        } else {
-          Set-LocalUser -Name $username -Password $password
-          Write-Output "User $username password updated."
-        }
+        # Создание пользователя с правами администратора
+        net user runneradmin "P@ssw0rd!" /add
+        net localgroup Administrators runneradmin /add
       shell: pwsh
 
-    - name: Create ngrok Tunnel
+    - name: Create ngrok Tunnel for RDP
       run: .\ngrok\ngrok.exe tcp 3389
+
+    - name: Display ngrok Tunnel Information
+      run: |
+        Start-Sleep -Seconds 10
+        .\ngrok\ngrok.exe tcp 3389 --log=stdout
       shell: pwsh
