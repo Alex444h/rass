@@ -2,99 +2,103 @@ name: Mas
 
 on:
   push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Построение и настройка системы
-    runs-on: windows-2022
+    runs-on: windows-latest
 
     env:
       NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       RUNNER_ADMIN_PASSWORD: ${{ secrets.RUNNER_ADMIN_PASSWORD }}
+      NGRNK_CACHE_DIR: ${{ github.workspace }}/ngrok_cache
 
     steps:
-      # Шаг 1: Проверка кода репозитория
       - name: Checkout repository
         uses: actions/checkout@v3
-
-      # Шаг 2: Настройка PowerShell Core (если требуется)
-      - name: Setup PowerShell
-        uses: PowerShell/setup-powershell@v1
         with:
-          version: '7.3.5'  # Укажите нужную версию PowerShell
+          fetch-depth: 1
 
-      # Шаг 3: Скачать ngrok
-      - name: Download ngrok
-        run: |
-          if (-Not (Test-Path -Path "./ngrok")) {
-            Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-          } else {
-            Write-Output "ngrok уже загружен."
-          }
+      - name: Setup ngrok
+        id: setup_ngrok
         shell: pwsh
-
-      # Шаг 4: Распаковать ngrok
-      - name: Extract ngrok
         run: |
-          if (-Not (Test-Path -Path "./ngrok/ngrok.exe")) {
-            Expand-Archive ngrok.zip -DestinationPath .\ngrok
-          } else {
-            Write-Output "ngrok уже распакован."
+          # Создание кэша для ngrok
+          if (-Not (Test-Path $env:NGRNK_CACHE_DIR)) {
+            New-Item -ItemType Directory -Path $env:NGRNK_CACHE_DIR
           }
-        shell: pwsh
 
-      # Шаг 5: Аутентификация ngrok
+          $ngrokPath = Join-Path $env:NGRNK_CACHE_DIR "ngrok.exe"
+
+          if (-Not (Test-Path $ngrokPath)) {
+            Write-Output "Скачивание ngrok..."
+            try {
+              Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile "$env:NGRNK_CACHE_DIR/ngrok.zip"
+              Expand-Archive -Path "$env:NGRNK_CACHE_DIR/ngrok.zip" -DestinationPath $env:NGRNK_CACHE_DIR
+              Remove-Item "$env:NGRNK_CACHE_DIR/ngrok.zip"
+              Write-Output "ngrok скачан и распакован."
+            }
+            catch {
+              Write-Error "Ошибка при скачивании или распаковке ngrok: $_"
+              exit 1
+            }
+          }
+          else {
+            Write-Output "ngrok уже закеширован."
+          }
+
       - name: Authenticate ngrok
-        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
         shell: pwsh
+        run: |
+          try {
+            & "$env:NGRNK_CACHE_DIR/ngrok.exe" authtoken $env:NGROK_AUTH_TOKEN
+            Write-Output "ngrok аутентифицирован."
+          }
+          catch {
+            Write-Error "Ошибка аутентификации ngrok: $_"
+            exit 1
+          }
 
-      # Шаг 6: Настройка DNS на Cloudflare
       - name: Set DNS to Cloudflare
+        shell: pwsh
         run: |
           try {
             $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
             foreach ($adapter in $adapters) {
               Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses @("1.1.1.1","1.0.0.1")
-              Write-Output "DNS установлен для адаптера: $($adapter.Name)"
+              Write-Output "DNS для адаптера $($adapter.Name) установлен на Cloudflare."
             }
-          } catch {
+          }
+          catch {
             Write-Error "Ошибка при настройке DNS: $_"
             exit 1
           }
-        shell: pwsh
 
-      # Шаг 7: Оптимизация производительности системы
       - name: Optimize System Performance
+        shell: pwsh
         run: |
           try {
             # Установка плана электропитания на Высокую производительность
-            powercfg -setactive SCHEME_MIN
+            powercfg /setactive scheme_min
             Write-Output "План электропитания установлен на Высокую производительность."
 
             # Отключение анимаций и эффектов для повышения производительности
             Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'WindowMetrics' -Value ''
-            Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value 0
+            Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0'
             Write-Output "Анимации и эффекты отключены."
 
             # Отключение неиспользуемых сервисов
-            $services = @("SysMain", "Spooler")
-            foreach ($service in $services) {
-              if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
-                Stop-Service -Name $service -Force
-                Set-Service -Name $service -StartupType Disabled
-                Write-Output "Сервис $service отключен."
-              }
-            }
-          } catch {
-            Write-Error "Ошибка при оптимизации системы: $_"
+            Stop-Service -Name "SysMain" -Force
+            Set-Service -Name "SysMain" -StartupType Disabled
+            Write-Output "Сервис SysMain отключен."
+          }
+          catch {
+            Write-Error "Ошибка при оптимизации производительности системы: $_"
             exit 1
           }
-        shell: pwsh
 
-      # Шаг 8: Включение Remote Desktop и создание пользователя
       - name: Enable Remote Desktop and Create User
+        shell: pwsh
         run: |
           try {
             # Разрешение подключений через RDP
@@ -106,12 +110,13 @@ jobs:
             # Проверка, существует ли пользователь 'runneradmin'
             $userExists = Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue
             if (-not $userExists) {
-              Write-Output "Создание нового пользователя 'runneradmin'."
+              Write-Output "Создание нового пользователя 'runneradmin'..."
               $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
               New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
               Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
               Write-Output "Пользователь 'runneradmin' создан и добавлен в группу 'Administrators'."
-            } else {
+            }
+            else {
               Write-Output "Пользователь 'runneradmin' уже существует. Обновление пароля."
               $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
               Set-LocalUser -Name "runneradmin" -Password $password
@@ -121,57 +126,37 @@ jobs:
               if (-not $isMember) {
                 Write-Output "Добавление пользователя 'runneradmin' в группу 'Administrators'."
                 Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
-              } else {
+              }
+              else {
                 Write-Output "Пользователь 'runneradmin' уже является членом группы 'Administrators'."
               }
             }
-          } catch {
-            Write-Error "Ошибка при настройке RDP или создании пользователя: $_"
+          }
+          catch {
+            Write-Error "Ошибка при настройке Remote Desktop и пользователя: $_"
             exit 1
           }
-        shell: pwsh
 
-      # Шаг 9: Создание туннеля ngrok для RDP
       - name: Create ngrok Tunnel for RDP
+        shell: pwsh
         run: |
           try {
-            Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -PassThru | Out-Null
-            Write-Output "ngrok туннель для RDP создан."
-          } catch {
-            Write-Error "Ошибка при создании ngrok туннеля: $_"
+            Start-Process -FilePath "$env:NGRNK_CACHE_DIR/ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow -PassThru
+            Write-Output "Туннель ngrok для RDP создан."
+          }
+          catch {
+            Write-Error "Ошибка при создании туннеля ngrok: $_"
             exit 1
           }
-        shell: pwsh
 
-      # Шаг 10: Отображение информации о туннеле ngrok
       - name: Display ngrok Tunnel Information
+        shell: pwsh
         run: |
-          Start-Sleep -Seconds 15
-          $tunnelInfo = .\ngrok\ngrok.exe tcp 3389 --log=stdout | Select-String "tcp://"
-          if ($tunnelInfo) {
-            Write-Output "Информация о туннеле ngrok:"
-            Write-Output $tunnelInfo
-          } else {
-            Write-Error "Не удалось получить информацию о туннеле ngrok."
+          try {
+            Start-Sleep -Seconds 10
+            & "$env:NGRNK_CACHE_DIR/ngrok.exe" tcp 3389 --log=stdout
+          }
+          catch {
+            Write-Error "Ошибка при отображении информации о туннеле ngrok: $_"
             exit 1
           }
-        shell: pwsh
-
-      # Шаг 11: Очистка временных файлов
-      - name: Cleanup Temporary Files
-        run: |
-          Remove-Item -Path "ngrok.zip" -ErrorAction SilentlyContinue
-          Remove-Item -Path "./ngrok" -Recurse -Force -ErrorAction SilentlyContinue
-          Write-Output "Временные файлы очищены."
-        shell: pwsh
-
-      # Шаг 12: Уведомление о завершении
-      - name: Notify Completion
-        if: success()
-        run: Write-Output "Workflow успешно завершен."
-        shell: pwsh
-
-      - name: Notify Failure
-        if: failure()
-        run: Write-Error "Workflow завершился с ошибкой."
-        shell: pwsh
