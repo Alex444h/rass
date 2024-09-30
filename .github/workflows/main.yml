@@ -45,14 +45,17 @@ jobs:
 
     - name: Enable Remote Desktop
       run: |
+        # Разрешение подключений через RDP
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-        
+
         # Создание пользователя с правами администратора
-        $password = ConvertTo-SecureString ${{ secrets.RUNNER_ADMIN_PASSWORD }} -AsPlainText -Force
+        $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
         New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
         Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
+      env:
+        RUNNER_ADMIN_PASSWORD: ${{ secrets.RUNNER_ADMIN_PASSWORD }}
       shell: pwsh
 
     - name: Create ngrok Tunnel for RDP
