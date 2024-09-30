@@ -17,19 +17,24 @@ jobs:
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+    - name: Create Ngrok Config File (EU Region)
+      run: |
+        Add-Content -Path "$Env:USERPROFILE\.ngrok2\ngrok.yml" -Value "authtoken: $Env:NGROK_AUTH_TOKEN"
+        Add-Content -Path "$Env:USERPROFILE\.ngrok2\ngrok.yml" -Value "region: eu"
     
     - name: Enable RDP
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-    
+
     - name: Set Admin Password
       run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
     
-    - name: Create Tunnel (EU Server)
-      run: .\ngrok\ngrok.exe tcp 3389 --region eu  # Используем полный флаг --region
-    
+    - name: Create Tunnel (EU Server via Config)
+      run: .\ngrok\ngrok.exe tcp 3389 --config "$Env:USERPROFILE\.ngrok2\ngrok.yml"
+
     - name: Optimize Network for RDP
       run: |
         # Установка приоритетов для QoS RDP, улучшение пинга
