@@ -9,38 +9,41 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - name: Установка Homebrew
-      run: |
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-        
-    - name: Установка TigerVNC
-      run: brew install tigervnc
+      - name: Установка Homebrew
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
+          eval "$(/opt/homebrew/bin/brew shellenv)"
 
-    - name: Настройка VNC пароля
-      run: |
-        mkdir -p ~/.vnc
-        echo "your_vnc_password" | vncpasswd -f > ~/.vnc/passwd
-        chmod 600 ~/.vnc/passwd
+      - name: Установка TigerVNC
+        run: brew install tigervnc
 
-    - name: Запуск VNC сервера
-      run: |
-        vncserver :1 -localhost no
+      - name: Установка jq
+        run: brew install jq
 
-    - name: Скачивание ngrok
-      run: |
-        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-        brew install --cask ngrok
+      - name: Настройка VNC пароля
+        run: |
+          mkdir -p ~/.vnc
+          echo "your_vnc_password" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
 
-    - name: Аутентификация ngrok
-      run: ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: Запуск VNC сервера
+        run: |
+          vncserver :1 -localhost no
 
-    - name: Создание туннеля ngrok
-      run: |
-        ngrok tcp 5901 --log=stdout &
-        echo "::set-output name=NGROK_URL::$(curl -s localhost:4040/api/tunnels | jq -r .tunnels[0].public_url)"
-      id: ngrok
+      - name: Установка ngrok
+        run: brew install --cask ngrok
 
-    - name: Вывод доступа
-      run: echo "VNC доступен по адресу: ${{ steps.ngrok.outputs.NGROK_URL }}"
+      - name: Аутентификация ngrok
+        run: ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+
+      - name: Создание туннеля ngrok
+        id: ngrok
+        run: |
+          ngrok tcp 5901 --log=stdout &
+          sleep 10
+          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r .tunnels[0].public_url)
+          echo "NGROK_URL=${NGROK_URL}" >> $GITHUB_OUTPUT
+
+      - name: Вывод доступа
+        run: echo "VNC доступен по адресу: ${{ steps.ngrok.outputs.NGROK_URL }}"
