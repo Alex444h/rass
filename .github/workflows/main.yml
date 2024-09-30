@@ -33,25 +33,54 @@ jobs:
 
     - name: Optimize Network Settings
       run: |
-        # Отключение Large Send Offload для IPv4 и IPv6
-        Get-NetAdapter | ForEach-Object {
-          Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName "Large Send Offload v2 (IPv4)" -DisplayValue "Disabled"
-          Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName "Large Send Offload v2 (IPv6)" -DisplayValue "Disabled"
+        # Получение всех активных сетевых адаптеров
+        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+
+        foreach ($adapter in $adapters) {
+          Write-Output "Processing adapter: $($adapter.Name)"
+
+          # Отключение Large Send Offload v2 (IPv4)
+          $lso_v2_ipv4 = Get-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv4)" -ErrorAction SilentlyContinue
+          if ($lso_v2_ipv4) {
+            Set-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv4)" -DisplayValue "Disabled"
+            Write-Output "Disabled Large Send Offload v2 (IPv4) for $($adapter.Name)."
+          } else {
+            Write-Output "Large Send Offload v2 (IPv4) not found for $($adapter.Name). Skipping."
+          }
+
+          # Отключение Large Send Offload v2 (IPv6)
+          $lso_v2_ipv6 = Get-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv6)" -ErrorAction SilentlyContinue
+          if ($lso_v2_ipv6) {
+            Set-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Large Send Offload v2 (IPv6)" -DisplayValue "Disabled"
+            Write-Output "Disabled Large Send Offload v2 (IPv6) for $($adapter.Name)."
+          } else {
+            Write-Output "Large Send Offload v2 (IPv6) not found for $($adapter.Name). Skipping."
+          }
+
+          # Отключение режима энергосбережения для сетевых адаптеров
+          Set-NetAdapterPowerManagement -Name $adapter.Name -PowerSavingMode "Disabled"
+          Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
         }
 
-        # Отключение режима энергосбережения для сетевых адаптеров
-        Get-NetAdapter | Set-NetAdapterPowerManagement -PowerSavingMode "Disabled"
-
         # Включение TCP Fast Open
-        New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "TcpFastOpen" -Value 1 -PropertyType DWord -Force
-        Write-Output "TCP Fast Open enabled."
+        $tcpFastOpenPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
+        if (-not (Get-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -ErrorAction SilentlyContinue)) {
+          New-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1 -PropertyType DWord -Force
+          Write-Output "TCP Fast Open enabled."
+        } else {
+          Set-ItemProperty -Path $tcpFastOpenPath -Name "TcpFastOpen" -Value 1
+          Write-Output "TCP Fast Open set to enabled."
+        }
       shell: pwsh
 
     - name: Optimize System for Performance
       run: |
         # Установка схемы электропитания на "Высокая производительность"
         $highPerfGuid = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
-        powercfg -duplicatescheme $highPerfGuid
+        $existingGuid = powercfg -list | Select-String $highPerfGuid
+        if (-not $existingGuid) {
+          powercfg -duplicatescheme $highPerfGuid
+        }
         powercfg -setactive $highPerfGuid
         Write-Output "Power plan set to High Performance."
 
@@ -63,9 +92,11 @@ jobs:
         $servicesToDisable = @("DiagTrack", "dmwappushservice")
         foreach ($service in $servicesToDisable) {
           if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
-            Stop-Service -Name $service -Force
-            Set-Service -Name $service -StartupType Disabled
+            Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+            Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue
             Write-Output "Service $service stopped and disabled."
+          } else {
+            Write-Output "Service $service not found. Skipping."
           }
         }
       shell: pwsh
