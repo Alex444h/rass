@@ -1,49 +1,46 @@
-name: Remote MacOS Access
+name: Remote macOS Access
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  remote-access:
+  setup_vnc:
     runs-on: macos-latest
-    env:
-      # Убедитесь, что путь к Homebrew добавлен в PATH
-      PATH: /opt/homebrew/bin:/opt/homebrew/sbin:${{ env.PATH }}
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
-
-    # Шаг установки ngrok, используя предустановленный Homebrew
-    - name: Install ngrok
-      run: brew install --cask ngrok
-
-    # Шаг настройки VNC для macOS
-    - name: Configure VNC
+    - name: Установка Homebrew
       run: |
-        # Включить удалённый доступ к экрану (VNC)
-        sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -suspend
-        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
+        eval "$(/opt/homebrew/bin/brew shellenv)"
         
-        # Настройка пароля для VNC из GitHub Secrets
-        VNC_PASSWORD="${{ secrets.VNC_PASSWORD }}"
-        # Кодирование пароля с использованием openssl
-        ENCODED_PASSWORD=$(echo -n "$VNC_PASSWORD" | /usr/bin/openssl enc -aes-128-cbc -a -salt -pass pass:"ngrok")
-        sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCPassword -string "$ENCODED_PASSWORD"
+    - name: Установка TigerVNC
+      run: brew install tigervnc
 
-    # Шаг запуска туннеля ngrok
-    - name: Start ngrok Tunnel
+    - name: Настройка VNC пароля
       run: |
-        # Запуск ngrok в фоновом режиме для порта VNC (5900)
-        ngrok tcp 5900 --log=stdout > ngrok.log &
-        # Ожидание запуска туннеля
-        sleep 15
-        # Получение публичного URL от ngrok
-        ngrok_url=$(grep -o "tcp://[0-9\.]*:[0-9]*" ngrok.log | head -n1)
-        echo "NGROK_URL=${ngrok_url}" >> $GITHUB_ENV
+        mkdir -p ~/.vnc
+        echo "your_vnc_password" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
 
-    # Шаг вывода информации для подключения
-    - name: Output Connection Info
+    - name: Запуск VNC сервера
       run: |
-        echo "✅ Подключитесь к VNC по адресу: ${{ env.NGROK_URL }}"
+        vncserver :1 -localhost no
+
+    - name: Скачивание ngrok
+      run: |
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+        brew install --cask ngrok
+
+    - name: Аутентификация ngrok
+      run: ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+
+    - name: Создание туннеля ngrok
+      run: |
+        ngrok tcp 5901 --log=stdout &
+        echo "::set-output name=NGROK_URL::$(curl -s localhost:4040/api/tunnels | jq -r .tunnels[0].public_url)"
+      id: ngrok
+
+    - name: Вывод доступа
+      run: echo "VNC доступен по адресу: ${{ steps.ngrok.outputs.NGROK_URL }}"
