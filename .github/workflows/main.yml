@@ -7,20 +7,25 @@ jobs:
     runs-on: windows-latest
 
     steps:
+    # Шаг 1: Проверка кода репозитория
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    # Шаг 2: Скачать ngrok
     - name: Download ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
+    # Шаг 3: Распаковать ngrok
     - name: Extract ngrok
       run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
 
+    # Шаг 4: Аутентификация ngrok
     - name: Authenticate ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
+    # Шаг 5: Настройка DNS на Cloudflare
     - name: Set DNS to Cloudflare
       run: |
         $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
@@ -29,6 +34,7 @@ jobs:
         }
       shell: pwsh
 
+    # Шаг 6: Оптимизация производительности системы
     - name: Optimize System Performance
       run: |
         # Установка плана электропитания на Высокую производительность
@@ -43,6 +49,7 @@ jobs:
         Set-Service -Name "SysMain" -StartupType Disabled
       shell: pwsh
 
+    # Шаг 7: Включение Remote Desktop и создание пользователя
     - name: Enable Remote Desktop
       run: |
         # Разрешение подключений через RDP
@@ -50,17 +57,41 @@ jobs:
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
-        # Создание пользователя с правами администратора
-        $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
-        New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
-        Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
+        # Проверка, существует ли пользователь 'runneradmin'
+        $userExists = Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue
+
+        if (-not $userExists) {
+            Write-Output "Создание нового пользователя 'runneradmin'."
+            $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
+            New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
+            Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
+        }
+        else {
+            Write-Output "Пользователь 'runneradmin' уже существует. Обновление пароля."
+
+            # Обновление пароля существующего пользователя
+            $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
+            Set-LocalUser -Name "runneradmin" -Password $password
+
+            # Убедимся, что пользователь принадлежит к группе "Administrators"
+            $isMember = Get-LocalGroupMember -Group "Administrators" -Member "runneradmin" -ErrorAction SilentlyContinue
+            if (-not $isMember) {
+                Write-Output "Добавление пользователя 'runneradmin' в группу 'Administrators'."
+                Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
+            }
+            else {
+                Write-Output "Пользователь 'runneradmin' уже является членом группы 'Administrators'."
+            }
+        }
       env:
         RUNNER_ADMIN_PASSWORD: ${{ secrets.RUNNER_ADMIN_PASSWORD }}
       shell: pwsh
 
+    # Шаг 8: Создание туннеля ngrok для RDP
     - name: Create ngrok Tunnel for RDP
       run: .\ngrok\ngrok.exe tcp 3389
 
+    # Шаг 9: Отображение информации о туннеле ngrok
     - name: Display ngrok Tunnel Information
       run: |
         Start-Sleep -Seconds 10
