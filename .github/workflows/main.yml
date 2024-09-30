@@ -1,31 +1,72 @@
-name: Setup RDP with Ngrok on Windows 11
+name: Mas
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  setup-rdp:
-    runs-on: self-hosted  # Используем self-hosted runner
+  setup-windows-rdp:
+    runs-on: windows-latest
+
     steps:
-      - name: Скачивание Ngrok
+      - name: Download ngrok
         run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
-      - name: Распаковка Ngrok
+      - name: Extract ngrok
         run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
 
-      - name: Аутентификация Ngrok
-        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      - name: Authenticate ngrok
+        run: .\ngrok\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-      - name: Включение RDP
+      - name: Set Russian as System Language
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-          # Создание пользователя (опционально)
-          # Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force)
+          # Установка русского языка системы
+          Set-WinSystemLocale ru-RU
+          Set-WinUserLanguageList ru-RU -Force
+          Set-WinUILanguageOverride -Language ru-RU
+          Set-Culture ru-RU
+          Set-WinHomeLocation -GeoId 255  # Россия
+          
+          # Перезагрузка системы для применения языковых настроек
+          # Обратите внимание, что перезагрузка может прервать workflow
+          shutdown /r /t 0
+        shell: powershell
 
-      - name: Запуск Ngrok для RDP
+      - name: Optimize Network Settings
+        run: |
+          # Установка DNS-серверов Google для улучшения скорости разрешения доменных имён
+          Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses ("8.8.8.8","8.8.4.4")
+          
+          # Отключение ненужных сетевых служб для улучшения производительности
+          Set-Service -Name "Dnscache" -StartupType Automatic
+          Set-Service -Name "Dhcp" -StartupType Automatic
+          
+          # Настройка TCP для оптимальной производительности
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "TcpWindowSize" -Value 64240 -PropertyType DWORD -Force
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "GlobalMaxTcpWindowSize" -Value 64240 -PropertyType DWORD -Force
+        shell: powershell
+
+      - name: Enable Remote Desktop
+        run: |
+          # Разрешение подключения через RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          
+          # Разрешение через брандмауэр
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Включение проверки подлинности пользователя
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+          # Создание локального пользователя с правами администратора
+          # Рекомендуется использовать более надёжный способ хранения пароля
+          $securePassword = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+          New-LocalUser -Name "runneradmin" -Password $securePassword -FullName "RDP Admin" -Description "User for RDP access"
+          Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
+        shell: powershell
+
+      - name: Create ngrok Tunnel for RDP
         run: .\ngrok\ngrok.exe tcp 3389
+        # Вы можете сохранить вывод ngrok для получения адреса туннеля
+        # Например, используя артефакты или другие методы
