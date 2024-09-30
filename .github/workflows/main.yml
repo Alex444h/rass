@@ -32,6 +32,11 @@ jobs:
       run: |
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -access -on -users rdpuser -privs -all -restart -agent -menu
+        - name: Open port 3389 in firewall
+  run: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app
+   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app
+   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockApp /System/Library/CoreServices/RemoteManagement/ARDAgent.app
+   sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
 
     - name: Open Firewall for Remote Management
       run: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app
