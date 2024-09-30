@@ -9,31 +9,42 @@ jobs:
     runs-on: macos-latest
 
     steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
     - name: Install Homebrew
       run: |
+        # Установка Homebrew
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-    
+        
+        # Экспорт переменных окружения из brew shellenv без префикса 'export '
+        /opt/homebrew/bin/brew shellenv | sed 's/^export //' >> $GITHUB_ENV
+
     - name: Install ngrok
       run: |
         brew install --cask ngrok
 
     - name: Configure VNC
       run: |
-        # Включить удалённый доступ к экрану
+        # Включить удалённый доступ к экрану (VNC)
         sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -suspend
-        sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCEnabled -bool true
-        sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCPassword -string "$(echo -n 'your_vnc_password' | /usr/bin/openssl enc -aes-128-cbc -a -salt -pass pass:"ngrok")"
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
+        
+        # Настройка пароля для VNC (используйте GitHub Secrets для безопасности)
+        VNC_PASSWORD="P@ssw0rd!"
+        ENCODED_PASSWORD=$(echo -n "$VNC_PASSWORD" | /usr/bin/openssl enc -aes-128-cbc -a -salt -pass pass:"ngrok")
+        sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCPassword -string "$ENCODED_PASSWORD"
 
     - name: Start ngrok Tunnel
       run: |
+        # Запуск ngrok для проброса порта VNC (5900)
         ngrok tcp 5900 --log=stdout > ngrok.log &
-        sleep 10
+        # Ожидание запуска туннеля
+        sleep 15
+        # Получение публичного URL от ngrok
         ngrok_url=$(grep -o "tcp://[0-9\.]*:[0-9]*" ngrok.log | head -n1)
         echo "NGROK_URL=$ngrok_url" >> $GITHUB_ENV
 
     - name: Output Connection Info
       run: |
-        echo "Connect to VNC at ${{ env.NGROK_URL }}"
+        echo "Подключитесь к VNC по адресу: ${{ env.NGROK_URL }}"
