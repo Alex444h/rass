@@ -13,10 +13,24 @@ jobs:
     - name: Extract ngrok
       run: Expand-Archive ngrok.zip
 
+    - name: Add execution permission for ngrok
+      run: |
+        icacls .\ngrok\ngrok.exe /grant Everyone:F
+        icacls .\ngrok\ngrok.exe /setintegritylevel L
+
     - name: Authenticate ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+    - name: Enable Remote Desktop and firewall rules
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+    - name: Set password for user 'runneradmin'
+      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "Str0ngP@ssw0rd123!" -Force)
 
     - name: Create RDP Tunnel to Windows 11
       run: .\ngrok\ngrok.exe tcp 3389
