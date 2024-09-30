@@ -11,14 +11,17 @@ jobs:
     steps:
     - name: Download ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+      shell: pwsh
 
     - name: Extract ngrok
       run: Expand-Archive ngrok.zip -DestinationPath ngrok
+      shell: pwsh
 
     - name: Auth ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      shell: pwsh
 
     - name: Configure DNS to Cloudflare
       run: |
@@ -63,7 +66,7 @@ jobs:
             Write-Output "Disabled Power Saving Mode for $($adapter.Name)."
           }
           catch {
-            Write-Output "Failed to disable Power Saving Mode for $($adapter.Name): $($_.Exception.Message)"
+            Write-Output ("Failed to disable Power Saving Mode for $($adapter.Name): $($_.Exception.Message)")
           }
         }
 
@@ -79,7 +82,7 @@ jobs:
           }
         }
         catch {
-          Write-Output "Failed to set TCP Fast Open: $($_.Exception.Message)"
+          Write-Output ("Failed to set TCP Fast Open: $($_.Exception.Message)")
         }
       shell: pwsh
 
@@ -108,7 +111,7 @@ jobs:
               Write-Output "Service $service stopped and disabled."
             }
             catch {
-              Write-Output "Failed to stop/disable service $service: $($_.Exception.Message)"
+              Write-Output ("Failed to stop/disable service $service: $($_.Exception.Message)")
             }
           } else {
             Write-Output "Service $service not found. Skipping."
@@ -147,3 +150,4 @@ jobs:
 
     - name: Create ngrok Tunnel
       run: .\ngrok\ngrok.exe tcp 3389
+      shell: pwsh
