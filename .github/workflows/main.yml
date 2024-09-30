@@ -1,11 +1,9 @@
 name: Mas
 
-on:
-  push:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
-  setup-windows-rdp:
+  build:
     runs-on: windows-latest
 
     steps:
@@ -16,61 +14,26 @@ jobs:
         run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
       - name: Extract ngrok
-        run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
+        run: Expand-Archive ngrok.zip -DestinationPath ngrok
 
       - name: Authenticate ngrok
-        run: .\ngrok\ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-      - name: Set Russian as System Language
+      - name: Enable Terminal Services
         run: |
-          # Установка русского языка системы
-          Set-WinSystemLocale ru-RU
-          Set-WinUserLanguageList ru-RU -Force
-          Set-WinUILanguageOverride -Language ru-RU
-          Set-Culture ru-RU
-          Set-WinHomeLocation -GeoId 255  # Россия
-
-          # Перезагрузка системы для применения языковых настроек
-          # Обратите внимание, что перезагрузка прервет текущий workflow
-          # Если перезагрузка не требуется в рамках workflow, можно удалить следующую строку
-          # shutdown /r /t 0
-        shell: powershell
-
-      - name: Optimize Network Settings
-        run: |
-          # Установка DNS-серверов Google для улучшения скорости разрешения доменных имён
-          Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses ("8.8.8.8","8.8.4.4")
-          
-          # Отключение ненужных сетевых служб для улучшения производительности
-          Set-Service -Name "Dnscache" -StartupType Automatic
-          Set-Service -Name "Dhcp" -StartupType Automatic
-          
-          # Настройка TCP для оптимальной производительности
-          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "TcpWindowSize" -Value 64240 -PropertyType DWORD -Force
-          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "GlobalMaxTcpWindowSize" -Value 64240 -PropertyType DWORD -Force
-        shell: powershell
-
-      - name: Enable Remote Desktop
-        run: |
-          # Разрешение подключения через RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          
-          # Разрешение через брандмауэр
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          # Включение проверки подлинности пользователя
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          # Создаёт или обновляет пользователя runneradmin
+          $password = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+          if (Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "runneradmin" -Password $password
+          } else {
+              New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP"
+              Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
+          }
 
-          # Создание локального пользователя с правами администратора
-          # Рекомендуется использовать секреты GitHub для хранения пароля
-          $securePassword = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
-          New-LocalUser -Name "runneradmin" -Password $securePassword -FullName "RDP Admin" -Description "User for RDP access"
-          Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
-        shell: powershell
-
-      - name: Create ngrok Tunnel for RDP
+      - name: Create ngrok Tunnel
         run: .\ngrok\ngrok.exe tcp 3389 --region eu
-        # Опция --region eu задаёт регион Европа
-        # Доступные регионы: us, eu, ap, au, sa, jp, in, etc.
