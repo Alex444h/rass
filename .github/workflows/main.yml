@@ -25,14 +25,8 @@ jobs:
       run: |
         $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
         foreach ($adapter in $adapters) {
-          Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses ("1.1.1.1","1.0.0.1")
+          Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses @("1.1.1.1","1.0.0.1")
         }
-      shell: pwsh
-
-    - name: Optimize Network Settings
-      run: |
-        # Установка QoS на максимальную приоритетность для RDP
-        New-NetQosPolicy -Name "HighPriorityRDP" -IPProtocolMatchCondition TCP -IPDestPortMatchCondition 3389 -ThrottleRateActionBitsPerSecond 10000000
       shell: pwsh
 
     - name: Optimize System Performance
@@ -54,9 +48,11 @@ jobs:
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+        
         # Создание пользователя с правами администратора
-        net user runneradmin "P@ssw0rd!" /add
-        net localgroup Administrators runneradmin /add
+        $password = ConvertTo-SecureString ${{ secrets.RUNNER_ADMIN_PASSWORD }} -AsPlainText -Force
+        New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
+        Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
       shell: pwsh
 
     - name: Create ngrok Tunnel for RDP
