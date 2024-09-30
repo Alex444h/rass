@@ -1,99 +1,133 @@
 name: Mas
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  NGROK_URL: "ngrok.zip"
+  NGROK_DIR: "ngrok"
+  DNS_SERVERS: "1.1.1.1,1.0.0.1"
+  POWER_SCHEME: "SCHEME_MIN"
+  USERNAME: "runneradmin"
+  PASSWORD_SECRET: "RUNNER_ADMIN_PASSWORD"
+  RDP_PORT: 3389
 
 jobs:
-  build:
-    runs-on: windows-latest
+  setup-windows:
+    runs-on: windows-2022
 
     steps:
-    # Шаг 1: Проверка кода репозитория
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      # Шаг 1: Проверка кода репозитория
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
 
-    # Шаг 2: Скачать ngrok
-    - name: Download ngrok
-      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+      # Шаг 2: Настройка переменных
+      - name: Set up environment variables
+        run: |
+          echo "NGROK_URL=${{ env.NGROK_URL }}" >> $GITHUB_ENV
+          echo "NGROK_DIR=${{ env.NGROK_DIR }}" >> $GITHUB_ENV
+        shell: pwsh
 
-    # Шаг 3: Распаковать ngrok
-    - name: Extract ngrok
-      run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
+      # Шаг 3: Скачать и распаковать ngrok с использованием кэша
+      - name: Cache ngrok
+        uses: actions/cache@v3
+        with:
+          path: ./$NGROK_DIR
+          key: ngrok-${{ runner.os }}-${{ hashFiles('**/ngrok.zip') }}
+          restore-keys: |
+            ngrok-${{ runner.os }}-
 
-    # Шаг 4: Аутентификация ngrok
-    - name: Authenticate ngrok
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
-      env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: Download and Extract ngrok
+        if: steps.cache-ngrok.outputs.cache-hit != 'true'
+        run: |
+          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile $NGROK_URL
+          Expand-Archive $NGROK_URL -DestinationPath ./$NGROK_DIR
+        shell: pwsh
 
-    # Шаг 5: Настройка DNS на Cloudflare
-    - name: Set DNS to Cloudflare
-      run: |
-        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
-        foreach ($adapter in $adapters) {
-          Set-DnsClientServerAddress -InterfaceIndex $adapter.InterfaceIndex -ServerAddresses @("1.1.1.1","1.0.0.1")
-        }
-      shell: pwsh
+      # Шаг 4: Аутентификация ngrok
+      - name: Authenticate ngrok
+        run: ./$NGROK_DIR/ngrok.exe authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    # Шаг 6: Оптимизация производительности системы
-    - name: Optimize System Performance
-      run: |
-        # Установка плана электропитания на Высокую производительность
-        powercfg -duplicatescheme SCHEME_MIN
+      # Шаг 5: Настройка DNS на Cloudflare
+      - name: Set DNS to Cloudflare
+        run: |
+          $dns = "${{ env.DNS_SERVERS }}" -split ","
+          Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
+            Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ServerAddresses $dns
+          }
+        shell: pwsh
 
-        # Отключение анимаций и эффектов для повышения производительности
-        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name 'WindowMetrics' -Value ''
-        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0'
+      # Шаг 6: Оптимизация производительности системы
+      - name: Optimize System Performance
+        run: |
+          # Установка плана электропитания на Высокую производительность
+          powercfg -duplicatescheme $env:POWER_SCHEME | Out-Null
+          powercfg -setactive $env:POWER_SCHEME
 
-        # Отключение неиспользуемых сервисов
-        Stop-Service -Name "SysMain" -Force
-        Set-Service -Name "SysMain" -StartupType Disabled
-      shell: pwsh
+          # Отключение анимаций и эффектов для повышения производительности
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name 'WindowMetrics' -Value ''
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name 'MinAnimate' -Value '0'
 
-    # Шаг 7: Включение Remote Desktop и создание пользователя
-    - name: Enable Remote Desktop
-      run: |
-        # Разрешение подключений через RDP
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          # Отключение неиспользуемых сервисов
+          $services = @("SysMain", "Spooler", "WMPNetworkSvc") # Добавьте другие сервисы по необходимости
+          foreach ($service in $services) {
+            Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+            Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue
+          }
+        shell: pwsh
 
-        # Проверка, существует ли пользователь 'runneradmin'
-        $userExists = Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue
+      # Шаг 7: Включение Remote Desktop и создание пользователя
+      - name: Enable Remote Desktop and Setup User
+        run: |
+          # Разрешение подключений через RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-        if (-not $userExists) {
-            Write-Output "Создание нового пользователя 'runneradmin'."
-            $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
-            New-LocalUser -Name "runneradmin" -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
-            Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
-        }
-        else {
-            Write-Output "Пользователь 'runneradmin' уже существует. Обновление пароля."
+          # Создание или обновление пользователя
+          if (-Not (Get-LocalUser -Name $env:USERNAME -ErrorAction SilentlyContinue)) {
+              Write-Output "Создание нового пользователя '$env:USERNAME'."
+              $password = ConvertTo-SecureString $env:${{ env.PASSWORD_SECRET }} -AsPlainText -Force
+              New-LocalUser -Name $env:USERNAME -Password $password -FullName "Runner Admin" -Description "Admin user for RDP access"
+              Add-LocalGroupMember -Group "Administrators" -Member $env:USERNAME
+          }
+          else {
+              Write-Output "Пользователь '$env:USERNAME' уже существует. Обновление пароля."
+              $password = ConvertTo-SecureString $env:${{ env.PASSWORD_SECRET }} -AsPlainText -Force
+              Set-LocalUser -Name $env:USERNAME -Password $password
 
-            # Обновление пароля существующего пользователя
-            $password = ConvertTo-SecureString $env:RUNNER_ADMIN_PASSWORD -AsPlainText -Force
-            Set-LocalUser -Name "runneradmin" -Password $password
+              # Убедимся, что пользователь принадлежит к группе "Administrators"
+              if (-Not (Get-LocalGroupMember -Group "Administrators" -Member $env:USERNAME -ErrorAction SilentlyContinue)) {
+                  Write-Output "Добавление пользователя '$env:USERNAME' в группу 'Administrators'."
+                  Add-LocalGroupMember -Group "Administrators" -Member $env:USERNAME
+              }
+          }
+        env:
+          RUNNER_ADMIN_PASSWORD: ${{ secrets.RUNNER_ADMIN_PASSWORD }}
+          USERNAME: ${{ env.USERNAME }}
+        shell: pwsh
 
-            # Убедимся, что пользователь принадлежит к группе "Administrators"
-            $isMember = Get-LocalGroupMember -Group "Administrators" -Member "runneradmin" -ErrorAction SilentlyContinue
-            if (-not $isMember) {
-                Write-Output "Добавление пользователя 'runneradmin' в группу 'Administrators'."
-                Add-LocalGroupMember -Group "Administrators" -Member "runneradmin"
-            }
-            else {
-                Write-Output "Пользователь 'runneradmin' уже является членом группы 'Administrators'."
-            }
-        }
-      env:
-        RUNNER_ADMIN_PASSWORD: ${{ secrets.RUNNER_ADMIN_PASSWORD }}
-      shell: pwsh
+      # Шаг 8: Создание туннеля ngrok для RDP
+      - name: Create ngrok Tunnel for RDP
+        run: Start-Process -NoNewWindow -FilePath ./$NGROK_DIR/ngrok.exe -ArgumentList "tcp", "$env:RDP_PORT" -PassThru
+        shell: pwsh
 
-    # Шаг 8: Создание туннеля ngrok для RDP
-    - name: Create ngrok Tunnel for RDP
-      run: .\ngrok\ngrok.exe tcp 3389
+      # Шаг 9: Отображение информации о туннеле ngrok
+      - name: Display ngrok Tunnel Information
+        run: |
+          Start-Sleep -Seconds 10
+          ./$NGROK_DIR/ngrok.exe tcp $env:RDP_PORT --log=stdout
+        shell: pwsh
 
-    # Шаг 9: Отображение информации о туннеле ngrok
-    - name: Display ngrok Tunnel Information
-      run: |
-        Start-Sleep -Seconds 10
-        .\ngrok\ngrok.exe tcp 3389 --log=stdout
-      shell: pwsh
+      # Шаг 10: Сохранение артефактов (например, логов)
+      - name: Upload ngrok Logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: ngrok-logs
+          path: ./$NGROK_DIR/ngrok.log
