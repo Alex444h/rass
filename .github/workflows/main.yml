@@ -31,8 +31,8 @@ jobs:
 
     - name: Optimize Network Settings
       run: |
-        # Установка QoS на максимальную приоритетность
-        New-NetQosPolicy -Name "HighPriorityRDP" -IPProtocolMatchCondition TCP -PortMatchCondition 3389 -ThrottleRateActionBitsPerSecond 10000000
+        # Установка QoS на максимальную приоритетность для RDP
+        New-NetQosPolicy -Name "HighPriorityRDP" -IPProtocolMatchCondition TCP -IPDestPortMatchCondition 3389 -ThrottleRateActionBitsPerSecond 10000000
       shell: pwsh
 
     - name: Optimize System Performance
