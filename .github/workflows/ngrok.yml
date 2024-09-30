@@ -1,0 +1,12 @@
+- name: Create ngrok Configuration
+  run: |
+    @"
+    authtoken: $Env:NGROK_AUTH_TOKEN
+    tunnels:
+      rdp:
+        proto: tcp
+        addr: 3389
+        region: europe
+    "@" | Out-File -FilePath .\ngrok\ngrok.yml -Encoding utf8
+  env:
+    NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
