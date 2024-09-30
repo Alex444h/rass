@@ -1,41 +1,101 @@
 name: Mas
 
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Download Ngrok
+    - name: Download ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-    
-    - name: Extract Ngrok
-      run: Expand-Archive ngrok.zip
 
-    - name: Ngrok Authentication
+    - name: Extract ngrok
+      run: Expand-Archive ngrok.zip -DestinationPath ngrok
+
+    - name: Auth ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: Create Ngrok Config File (EU Region)
+    - name: Configure DNS to Cloudflare
       run: |
-        Add-Content -Path "$Env:USERPROFILE\.ngrok2\ngrok.yml" -Value "authtoken: $Env:NGROK_AUTH_TOKEN"
-        Add-Content -Path "$Env:USERPROFILE\.ngrok2\ngrok.yml" -Value "region: eu"
-    
-    - name: Enable RDP
+        $interface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1 -ExpandProperty Name
+        if ($interface) {
+          Set-DnsClientServerAddress -InterfaceAlias $interface -ServerAddresses ("1.1.1.1","1.0.0.1")
+          Write-Output "DNS servers set to Cloudflare for interface $interface."
+        } else {
+          Write-Error "No active network interface found."
+        }
+      shell: pwsh
+
+    - name: Optimize Network Settings
       run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        # Отключение Large Send Offload для IPv4 и IPv6
+        Get-NetAdapter | ForEach-Object {
+          Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName "Large Send Offload v2 (IPv4)" -DisplayValue "Disabled"
+          Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName "Large Send Offload v2 (IPv6)" -DisplayValue "Disabled"
+        }
+
+        # Отключение режима энергосбережения для сетевых адаптеров
+        Get-NetAdapter | Set-NetAdapterPowerManagement -PowerSavingMode "Disabled"
+
+        # Включение TCP Fast Open
+        New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "TcpFastOpen" -Value 1 -PropertyType DWord -Force
+        Write-Output "TCP Fast Open enabled."
+      shell: pwsh
+
+    - name: Optimize System for Performance
+      run: |
+        # Установка схемы электропитания на "Высокая производительность"
+        $highPerfGuid = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
+        powercfg -duplicatescheme $highPerfGuid
+        powercfg -setactive $highPerfGuid
+        Write-Output "Power plan set to High Performance."
+
+        # Отключение визуальных эффектов для повышения производительности
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name 'VisualFXSetting' -Value 2
+        Write-Output "Visual effects disabled for performance."
+
+        # Отключение ненужных сервисов
+        $servicesToDisable = @("DiagTrack", "dmwappushservice")
+        foreach ($service in $servicesToDisable) {
+          if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
+            Stop-Service -Name $service -Force
+            Set-Service -Name $service -StartupType Disabled
+            Write-Output "Service $service stopped and disabled."
+          }
+        }
+      shell: pwsh
+
+    - name: Enable Remote Desktop
+      run: |
+        # Включение Remote Desktop
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Write-Output "Remote Desktop enabled."
+
+        # Включение правила брандмауэра для Remote Desktop
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+        Write-Output "Firewall rules for Remote Desktop enabled."
 
-    - name: Set Admin Password
-      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-    
-    - name: Create Tunnel (EU Server via Config)
-      run: .\ngrok\ngrok.exe tcp 3389 --config "$Env:USERPROFILE\.ngrok2\ngrok.yml"
+        # Требование аутентификации пользователей
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+        Write-Output "User authentication required for RDP."
 
-    - name: Optimize Network for RDP
-      run: |
-        # Установка приоритетов для QoS RDP, улучшение пинга
-        New-NetQosPolicy -Name "RDP QoS" -IPProtocolMatchCondition "TCP" -DestinationPort 3389 -DSCPAction 46
+        # Создание или обновление пользователя "runneradmin"
+        $username = "runneradmin"
+        $password = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
+        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+          New-LocalUser -Name $username -Password $password -FullName "Runner Admin" -Description "User for RDP access"
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Write-Output "User $username created and added to Administrators group."
+        } else {
+          Set-LocalUser -Name $username -Password $password
+          Write-Output "User $username password updated."
+        }
+      shell: pwsh
+
+    - name: Create ngrok Tunnel
+      run: .\ngrok\ngrok.exe tcp 3389
